@@ -95,7 +95,7 @@ getvms ()
         VM_LIST_LXC=$( pvesh get /nodes/${NODE_ID}/lxc --noborder=1 --noheader=1 | awk '{print$2}' 2> $ERR_FILE )
         check_for_error
         if [ "${VM_ID}" != "" ]; then
-            VM_LIST_LXC=$( echo "$VM_LIST_LXC" | grep -w ${VM_ID} )
+            VM_LIST_LXC=$( echo "$VM_LIST_LXC" | grep -E -w ${VM_ID} )
         fi
     fi
 
@@ -105,7 +105,7 @@ getvms ()
         VM_LIST_QEMU=$( pvesh get /nodes/${NODE_ID}/qemu --noborder=1 --noheader=1 | awk '{print$2}' 2> $ERR_FILE )
         check_for_error
         if [ "${VM_ID}" != "" ]; then
-            VM_LIST_QEMU=$( echo "$VM_LIST_QEMU" | grep -w ${VM_ID} )
+            VM_LIST_QEMU=$( echo "$VM_LIST_QEMU" | grep -E -w ${VM_ID} )
         fi
     fi
 }
@@ -197,7 +197,7 @@ usage() {
 	echo "  -r|--snap-retain     max time to preserve/retain snapshots. Default infinite"
 	echo "                        e.g. \"7 days ago\", \"12 hours ago\""
 	echo "  --type               vm type to snapshot (lxc/qemu/all). Default all"
-	echo "  --id                 vm id to snapshot. Default all"
+	echo "  --id                 vm id to snapshot, you specify multiple id using regex \"id1|id2|id3\". Default all"
     echo "  --no-snap            no snapshot, only clean old snapshots"
     echo "  --replicate-now      trigger all replication tasks after snapshot"
 	echo "  --quiet              quiet. suppress output to stdout"
