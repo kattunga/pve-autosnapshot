@@ -1,0 +1,311 @@
+#!/bin/bash
+
+DATE=/usr/bin/date
+
+LOG_DATE_FORMAT="+%Y-%m-%d %H:%M:%S"
+SNAP_DATE_FORMAT="+%Y%m%d%H%M%S"
+
+TODAY_DATE_TIME=$(${DATE} "${SNAP_DATE_FORMAT}")
+
+NODE_ID=
+VM_TYPE=all
+VM_ID=
+SNAP_PREF=
+MAX_TIME=
+SNAPSHOT=true
+REPLICATE_NOW=false
+QUIET=false
+DEBUG=false
+
+VM_LIST_LXC=
+VM_LIST_QEMU=
+
+LOCK_PATH=/var/lock
+
+TMP_PATH=/tmp/$(basename $0 .sh).$$
+ERR_FILE=$TMP_PATH/error
+LOG_FILE=$TMP_PATH/log
+
+check_for_error() {
+	if [ -s "$ERR_FILE" ]
+    then
+		log "$(cat $ERR_FILE)"
+		exit 1
+	fi
+}
+
+log() {
+	# if log has new lines, log each line separately
+	if [[ $1 == *$'\n'* ]]
+    then
+		for l in ${1//$'\n'/'~   '}; do
+			log "$l"
+		done
+		return
+	fi
+	# don't output blank lines
+	if [ -n "$1" ] && [ "$1" != "-> " ]
+    then
+		if [ $QUIET = false ]; then
+    		local date_line=$(${DATE} "${LOG_DATE_FORMAT}")
+			echo "$date_line $1"
+		fi
+	fi
+}
+
+log_error() {
+	echo "$1" > $ERR_FILE
+	check_for_error
+}
+
+on_exit() {
+	local sig="$1"; shift
+	[ $DEBUG == true ] && log "on_exit: signal = $sig"
+    for i in "${on_exit_items[@]}"
+    do
+        [ $DEBUG == true ] && log "on_exit: $i"
+        eval $i
+    done
+    # propigate the sig
+    if [ $sig != EXIT ]
+    then
+    	trap - $sig EXIT
+    	kill -s $sig $$
+    fi
+}
+
+on_exit_run() {
+    local n=${#on_exit_items[*]}
+    on_exit_items[$n]="$*"
+    if [[ $n -eq 0 ]]
+    then
+        [ $DEBUG == true ] && log "setting trap"
+        for sig in EXIT HUP INT QUIT PIPE TERM; do
+        	[ $DEBUG == true ] && log "trap \"on_exit $sig\" $sig"
+        	trap "on_exit $sig" $sig
+        done
+    fi
+}
+
+getvms ()
+{
+    if [[ "${VM_TYPE}" == "all" || "${VM_TYPE}" == "lxc" ]]
+    then
+        [ $DEBUG = true ] && log "Get lxc vm list"
+        VM_LIST_LXC=$( pvesh get /nodes/${NODE_ID}/lxc --noborder=1 --noheader=1 | awk '{print$2}' 2> $ERR_FILE )
+        check_for_error
+        if [ "${VM_ID}" != "" ]; then
+            VM_LIST_LXC=$( echo "$VM_LIST_LXC" | grep -w ${VM_ID} )
+        fi
+    fi
+
+    if [[ "${VM_TYPE}" == "all" || "${VM_TYPE}" == "qemu" ]]
+    then
+        [ $DEBUG = true ] && log "Get qemu vm list"
+        VM_LIST_QEMU=$( pvesh get /nodes/${NODE_ID}/qemu --noborder=1 --noheader=1 | awk '{print$2}' 2> $ERR_FILE )
+        check_for_error
+        if [ "${VM_ID}" != "" ]; then
+            VM_LIST_QEMU=$( echo "$VM_LIST_QEMU" | grep -w ${VM_ID} )
+        fi
+    fi
+}
+
+replicatenow()
+{
+    replication_tasks=$( pvesh get /nodes/${NODE_ID}/replication --guest $1 --noborder=1 --noheader=1 )
+
+    for task in ${replication_tasks}
+    do
+        log "-> triggering replication task ${task}."
+        pvesh create /nodes/${NODE_ID}/replication/${task}/schedule_now
+    done
+}
+
+snapshotvm ()
+{
+    local type=$1
+    local vm=$2
+
+    if [ ! -z "${MAX_TIME}" ]
+    then
+        RETAIN_DATE_TIME=$( ${DATE} "${SNAP_DATE_FORMAT}" --date="${MAX_TIME}" )
+        if [ $RETAIN_DATE_TIME -gt $TODAY_DATE_TIME ]
+        then
+            log_error "ERROR: wrong --snap-retain value, remember to add the 'ago' word. ex: 1 day ago or use the minus sign: -2 days"
+        fi
+
+        SNAP_LIST=$( pvesh get /nodes/${NODE_ID}/${type}/${vm}/snapshot --noborder=1 --noheader=1 | awk '{print$2}' | grep ${SNAP_PREF} 2> $ERR_FILE )
+        check_for_error
+
+        for snap in ${SNAP_LIST}
+        do
+            # get the datetime portion of the snapshot name
+            SNAP_DATE_TIME=${snap:( ${#SNAP_PREF} )}
+
+            #  need to ensure $SNAP_DATE_TIME is numeric and 14 digits for comparison to $RETAIN_DATE_TIME
+            if [ $( echo ${SNAP_DATE_TIME} | grep -c '^[0-9]*$' ) -eq 1 ] && [ ${#SNAP_DATE_TIME} -eq 14 ]; then
+                if [ $RETAIN_DATE_TIME -gt $SNAP_DATE_TIME ]
+                then
+                    log "-> destroying snapshot $snap"
+                    output=$( pvesh delete /nodes/${NODE_ID}/${type}/${vm}/snapshot/${snap} 2> $ERR_FILE )
+                    check_for_error
+                    log "-> $output"
+
+                fi
+            fi
+        done
+    fi
+
+    # create snapshot
+    if [ ${SNAPSHOT} == true ]
+    then
+        log "-> ${type} $vm@$SNAPNAME doing snapshot."
+        output=$( pvesh create /nodes/${NODE_ID}/${type}/${vm}/snapshot --snapname "${SNAPNAME}" 2> $ERR_FILE )
+        check_for_error
+        log "-> $output"
+    fi
+
+    # trigger replication
+    if [ ${REPLICATE_NOW} == true ]
+    then
+        replicatenow ${vm}
+    fi
+}
+
+snapshotvms ()
+{
+    local SNAPNAME=${SNAP_PREF}${TodayDateTime}
+    local vm
+
+    for vm in ${VM_LIST_LXC}
+    do
+        snapshotvm "lxc" ${vm}
+    done
+
+    for vm in ${VM_LIST_QEMU}
+    do
+        snapshotvm "qemu" ${vm}
+    done
+}
+
+usage() {
+	echo ""
+	echo "Usage: $(basename $0) --node NODE --prefix PREFIX --snap-retain \"RETAIN\" [--type TYPE] [--id VMID | --all]"
+	echo "  -n|--node            node name (required)"
+    echo "  -p|--prefix          snapshot prefix name. (required)"
+	echo "  -r|--snap-retain     max time to preserve/retain snapshots. Default infinite"
+	echo "                        e.g. \"7 days ago\", \"12 hours ago\""
+	echo "  --type               vm type to snapshot (lxc/qemu/all). Default all"
+	echo "  --id                 vm id to snapshot. Default all"
+    echo "  --no-snap            no snapshot, only clean old snapshots"
+    echo "  --replicate-now      trigger all replication tasks after snapshot"
+	echo "  --quiet              quiet. suppress output to stdout"
+	echo "  --debug              show diagnositc information"
+	echo "  -h --help            display usage options "
+	exit 
+}
+
+#######################################################################################
+#################################### Main Entry #######################################
+#######################################################################################
+
+[ $# -eq 0 ] && usage
+
+while [ $# -gt 0 ]
+do
+    case "$1" in
+        -n|--node)
+            shift
+            NODE_ID=$1
+            ;;
+        -p|--prefix)
+            shift
+            SNAP_PREF="$1"
+            ;;
+        -r|--snap-retain)
+            shift
+            MAX_TIME="$1"
+            ;;
+        --type)
+            shift
+            VM_TYPE=$1
+            ;;
+        --id)
+            shift
+            VM_ID=$1
+            ;;
+        --no-snap)
+        	SNAPSHOT=false
+        	;;
+        --replicate-now)
+        	REPLICATE_NOW=true
+        	;;
+        --quiet)
+         	QUIET=true
+         	;;
+        --debug)
+            DEBUG=true
+            ;;
+        -h|--help)
+         	usage
+         	;;
+        *)
+         	echo "Invalid option $1."
+            usage
+            ;;
+    esac
+    shift
+done
+
+# check required params
+if [ -z "${NODE_ID}" ]
+then
+	echo ""
+	echo "Missing parameter -n|--node"
+	usage
+fi
+if [ -z "${SNAP_PREF}" ]
+then
+	echo ""
+	echo "Missing parameter -p|--prefix"
+	usage
+fi
+
+# lock & err file isolation based on source path
+NODE_ID_HASH=${NODE_ID//\//#}
+
+# lock file to avoid concurrent snapshot
+LOCK_FILE=$LOCK_PATH/$(basename $0 .sh)-${NODE_ID_HASH}
+
+# create isolated tmp directory
+mkdir -p $TMP_PATH > /dev/null 2>&1
+[ $DEBUG = true ] && log "TMP_PATH = $TMP_PATH"
+
+# register exit/clean up tasks
+on_exit_run	log "End ------------------------------------------------------------"
+[ $DEBUG = false ] && on_exit_run rm -rf $TMP_PATH
+
+# Check if snapshot is running
+if [ -e "$LOCK_FILE" ]
+then
+	log_error "-> ERROR: autosnapshot is currently running."
+	exit 1
+fi
+
+# set the lock flag w/ pid
+touch $LOCK_FILE > /dev/null 2>&1
+if [ $? -gt 0 ]
+then
+	echo "ERROR: unable to create lock file: $LOCK_FILE"
+	exit 1
+fi
+echo $$ > $LOCK_FILE
+
+# register exit/clean up tasks
+on_exit_run rm -f $LOCK_FILE
+
+# create/clean snapshots
+getvms
+snapshotvms
+
+exit 0
