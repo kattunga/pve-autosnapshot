@@ -159,6 +159,8 @@ snapshotvm ()
     # create snapshot
     if [ ${SNAPSHOT} == true ]
     then
+        local SNAPNAME=${SNAP_PREF}${TODAY_DATE_TIME}
+
         log "-> ${type} $vm@$SNAPNAME doing snapshot."
         output=$( pvesh create /nodes/${NODE_ID}/${type}/${vm}/snapshot --snapname "${SNAPNAME}" 2> $ERR_FILE )
         check_for_error
@@ -174,7 +176,6 @@ snapshotvm ()
 
 snapshotvms ()
 {
-    local SNAPNAME=${SNAP_PREF}${TodayDateTime}
     local vm
 
     for vm in ${VM_LIST_LXC}
