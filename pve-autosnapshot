@@ -13,7 +13,7 @@ VM_ID=
 SNAP_PREF=
 MAX_TIME=
 SNAPSHOT=true
-REPLICATE_NOW=false
+REPLICATE_TO_TARGET=
 QUIET=false
 DEBUG=false
 
@@ -116,8 +116,13 @@ replicatenow()
 
     for task in ${replication_tasks}
     do
-        log "-> triggering replication task ${task}."
-        pvesh create /nodes/${NODE_ID}/replication/${task}/schedule_now
+        pvesh get /nodes/${NODE_ID}/replication/${task}/status --noborder=1 --noheader=1 | grep "target" | grep -w "${REPLICATE_TO_TARGET}" > /dev/null 2>&1
+        if [ $? -eq 0 ]
+        then
+            log "-> triggering replication task ${task}."
+            output=$( pvesh create /nodes/${NODE_ID}/replication/${task}/schedule_now )
+            log "-> $output"
+        fi
     done
 }
 
@@ -168,7 +173,7 @@ snapshotvm ()
     fi
 
     # trigger replication
-    if [ ${REPLICATE_NOW} == true ]
+    if [ ! -z "${REPLICATE_TO_TARGET}" ]
     then
         replicatenow ${vm}
     fi
@@ -195,11 +200,11 @@ usage() {
 	echo "  -n|--node            node name (required)"
     echo "  -p|--prefix          snapshot prefix name. (required)"
 	echo "  -r|--snap-retain     max time to preserve/retain snapshots. Default infinite"
-	echo "                        e.g. \"7 days ago\", \"12 hours ago\""
+	echo "                         e.g. \"7 days ago\", \"12 hours ago\""
 	echo "  --type               vm type to snapshot (lxc/qemu/all). Default all"
 	echo "  --id                 vm id to snapshot, you specify multiple id using regex \"id1|id2|id3\". Default all"
     echo "  --no-snap            no snapshot, only clean old snapshots"
-    echo "  --replicate-now      trigger all replication tasks after snapshot"
+    echo "  --tr-target          trigger replication tasks to target after snapshot"
 	echo "  --quiet              quiet. suppress output to stdout"
 	echo "  --debug              show diagnositc information"
 	echo "  -h --help            display usage options "
@@ -238,8 +243,8 @@ do
         --no-snap)
         	SNAPSHOT=false
         	;;
-        --replicate-now)
-        	REPLICATE_NOW=true
+        --tr-target)
+        	REPLICATE_TO_TARGET=$1
         	;;
         --quiet)
          	QUIET=true
