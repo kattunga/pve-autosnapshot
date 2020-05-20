@@ -26,60 +26,34 @@ TMP_PATH=/tmp/$(basename $0 .sh).$$
 ERR_FILE=$TMP_PATH/error
 LOG_FILE=$TMP_PATH/log
 
-check_for_error() {
-	if [ -s "$ERR_FILE" ]
-    then
-		log "$(cat $ERR_FILE)"
-		exit 1
-	fi
-}
-
-log() {
-	# if log has new lines, log each line separately
-	if [[ $1 == *$'\n'* ]]
-    then
-		for l in ${1//$'\n'/'~   '}; do
-			log "$l"
-		done
-		return
-	fi
-	# don't output blank lines
-	if [ -n "$1" ] && [ "$1" != "-> " ]
-    then
-		if [ $QUIET = false ]; then
-    		local date_line=$(${DATE} "${LOG_DATE_FORMAT}")
-			echo "$date_line $1"
-		fi
-	fi
-}
-
-log_error() {
-	echo "$1" > $ERR_FILE
-	check_for_error
-}
-
+declare -a on_exit_items
+####################################Function###########################################
+#
+# on exit
+#
 on_exit() {
-	local sig="$1"; shift
+	sig="$1"; shift
 	[ $DEBUG == true ] && log "on_exit: signal = $sig"
-    for i in "${on_exit_items[@]}"
-    do
+    for i in "${on_exit_items[@]}"; do
         [ $DEBUG == true ] && log "on_exit: $i"
         eval $i
     done
     # propigate the sig
-    if [ $sig != EXIT ]
-    then
+    if [ $sig != EXIT ]; then
     	trap - $sig EXIT
     	kill -s $sig $$
     fi
 }
 
+####################################Function###########################################
+#
+# on exit run
+#
 on_exit_run() {
     local n=${#on_exit_items[*]}
     on_exit_items[$n]="$*"
-    if [[ $n -eq 0 ]]
-    then
-        [ $DEBUG == true ] && log "setting trap"
+    if [[ $n -eq 0 ]]; then
+        [ $DEBUG == true ] && log "Setting trap"
         for sig in EXIT HUP INT QUIT PIPE TERM; do
         	[ $DEBUG == true ] && log "trap \"on_exit $sig\" $sig"
         	trap "on_exit $sig" $sig
@@ -87,7 +61,78 @@ on_exit_run() {
     fi
 }
 
-getvms ()
+#######################################################################################
+#
+# Function log to std out and log file(s)
+#
+log() {
+
+	# if log has new lines, log each line separately
+	if [[ $1 == *$'\n'* ]]; then
+		local IFS=$'~'
+		for l in ${1//$'\n'/'~   '}; do
+			log "$l"
+		done
+		return
+	fi
+
+	# don't output blank lines
+	if [ -n "$1" ] && [ "$1" != "" ]; then
+
+		date_line=$($DATE "$LOG_DATE_FORMAT")
+
+		# to console
+		if [ $QUIET == false ]; then
+
+			if [ "$2" == "2" ]; then
+				echo "$date_line $1" >&2 
+				echo -e "$date_line \e[31m$1\e[0m"
+			else
+				echo "$date_line $1"
+			fi
+		fi
+
+		# to logfile
+		echo "$date_line $1" >> $LOG_FILE 2> /dev/null
+
+		# to syslog
+		if [ $SYSLOG == true ]; then
+			line="$1"
+			#fix lines beginning w/ '->' as logger reads as cl option
+			if [ "->" == "${line:0:2}" ]; then
+				line="${line:2}"
+			fi
+			$LOGGER -t $(basename $0) "$line"
+		fi
+	fi
+}
+
+#######################################################################################
+#
+# Function check if error was logged
+#
+check_for_error() {
+	if [ -s "$LOG_ERROR_FILE" ]; then
+		log "ERROR: $(cat $LOG_ERROR_FILE)" "2"
+		execute_notification
+		exit 1
+	fi
+}
+
+#######################################################################################
+#
+# Function log error
+#
+log_error() {
+	echo "$1" > $LOG_ERROR_FILE
+	check_for_error
+}
+
+#######################################################################################
+#
+# Function get LXC/QEMU vm lists
+#
+get_vms ()
 {
     if [[ "${VM_TYPE}" == "all" || "${VM_TYPE}" == "lxc" ]]
     then
@@ -110,27 +155,16 @@ getvms ()
     fi
 }
 
-replicatenow()
-{
-    replication_tasks=$( pvesh get /nodes/${NODE_ID}/replication --guest $1 --noborder=1 --noheader=1 )
-
-    for task in ${replication_tasks}
-    do
-        pvesh get /nodes/${NODE_ID}/replication/${task}/status --noborder=1 --noheader=1 | grep "target" | grep -w "${REPLICATE_TO_TARGET}" > /dev/null 2>&1
-        if [ $? -eq 0 ]
-        then
-            log "-> triggering replication task ${task}."
-            output=$( pvesh create /nodes/${NODE_ID}/replication/${task}/schedule_now )
-            log "-> $output"
-        fi
-    done
-}
-
-snapshotvm ()
+#######################################################################################
+#
+# Function snapshot one VM and clean old ones if required, at least one snapshot is always keeped
+#
+snapshot_vm ()
 {
     local type=$1
     local vm=$2
 
+    # clan old snapshots
     if [ ! -z "${MAX_TIME}" ]
     then
         RETAIN_DATE_TIME=$( ${DATE} "${SNAP_DATE_FORMAT}" --date="${MAX_TIME}" )
@@ -139,7 +173,8 @@ snapshotvm ()
             log_error "ERROR: wrong --snap-retain value, remember to add the 'ago' word. ex: 1 day ago or use the minus sign: -2 days"
         fi
 
-        SNAP_LIST=$( pvesh get /nodes/${NODE_ID}/${type}/${vm}/snapshot --noborder=1 --noheader=1 | awk '{print$2}' | grep ${SNAP_PREF} 2> $ERR_FILE )
+        [ $DEBUG = true ] && log "get napshot list"
+        SNAP_LIST=$( pvesh get /nodes/${NODE_ID}/${type}/${vm}/snapshot --output-format yaml | grep "name: ${SNAP_PREF}" | awk '{print$2}' | sort | head -n -1 2> $ERR_FILE )
         check_for_error
 
         for snap in ${SNAP_LIST}
@@ -151,12 +186,16 @@ snapshotvm ()
             if [ $( echo ${SNAP_DATE_TIME} | grep -c '^[0-9]*$' ) -eq 1 ] && [ ${#SNAP_DATE_TIME} -eq 14 ]; then
                 if [ $RETAIN_DATE_TIME -gt $SNAP_DATE_TIME ]
                 then
-                    log "-> destroying snapshot $snap"
+                    log "destroying snapshot $snap"
                     output=$( pvesh delete /nodes/${NODE_ID}/${type}/${vm}/snapshot/${snap} 2> $ERR_FILE )
                     check_for_error
-                    log "-> $output"
+                    log "$output"
 
+                else
+                    [ $DEBUG = true ] && log "$snap is not expired."
                 fi
+            else
+                log "$snap name has wrong datetime format."
             fi
         done
     fi
@@ -166,32 +205,70 @@ snapshotvm ()
     then
         local SNAPNAME=${SNAP_PREF}${TODAY_DATE_TIME}
 
-        log "-> ${type} $vm@$SNAPNAME doing snapshot."
+        log "${type} $vm@$SNAPNAME doing snapshot."
         output=$( pvesh create /nodes/${NODE_ID}/${type}/${vm}/snapshot --snapname "${SNAPNAME}" 2> $ERR_FILE )
         check_for_error
-        log "-> $output"
-    fi
-
-    # trigger replication
-    if [ ! -z "${REPLICATE_TO_TARGET}" ]
-    then
-        replicatenow ${vm}
+        log "$output"
     fi
 }
 
-snapshotvms ()
+
+#######################################################################################
+#
+# Function replicate one VM
+#
+replicate_vm_now()
 {
+    replication_tasks=$( pvesh get /nodes/${NODE_ID}/replication --guest $1 --noborder=1 --noheader=1 )
+
+    for task in ${replication_tasks}
+    do
+        pvesh get /nodes/${NODE_ID}/replication/${task}/status --noborder=1 --noheader=1 | grep "target" | grep -w "${REPLICATE_TO_TARGET}" > /dev/null 2>&1
+        if [ $? -eq 0 ]
+        then
+            log "triggering replication task ${task}."
+            output=$( pvesh create /nodes/${NODE_ID}/replication/${task}/schedule_now )
+            log "$output"
+        fi
+    done
+}
+
+#######################################################################################
+#
+# Function loop al vm and snapshot/replicate
+#
+do_work ()
+{
+    get_vms
+
     local vm
 
+    # trigger snapshot/cleanup
     for vm in ${VM_LIST_LXC}
     do
-        snapshotvm "lxc" ${vm}
+        snapshot_vm "lxc" ${vm}
     done
 
     for vm in ${VM_LIST_QEMU}
     do
-        snapshotvm "qemu" ${vm}
+        snapshot_vm "qemu" ${vm}
     done
+
+    # trigger replication
+    if [ ! -z "${REPLICATE_TO_TARGET}" ]
+    then
+        sleep 1m
+
+        for vm in ${VM_LIST_LXC}
+        do
+            replicate_vm_now ${vm}
+        done
+
+        for vm in ${VM_LIST_QEMU}
+        do
+            replicate_vm_now ${vm}
+        done
+    fi
 }
 
 usage() {
@@ -283,20 +360,24 @@ NODE_ID_HASH=${NODE_ID//\//#}
 # lock file to avoid concurrent snapshot
 LOCK_FILE=$LOCK_PATH/$(basename $0 .sh)-${NODE_ID_HASH}
 
+# Check if snapshot is running
+if [ -e "$LOCK_FILE" ]
+then
+	log_error "ERROR: autosnapshot is currently running."
+	exit 1
+fi
+
 # create isolated tmp directory
 mkdir -p $TMP_PATH > /dev/null 2>&1
 [ $DEBUG = true ] && log "TMP_PATH = $TMP_PATH"
 
-# register exit/clean up tasks
-on_exit_run	log "End ------------------------------------------------------------"
-[ $DEBUG = false ] && on_exit_run rm -rf $TMP_PATH
+# save target name as first line of log
+log "Node: $NODE_ID vm: $VM_ID"
 
-# Check if snapshot is running
-if [ -e "$LOCK_FILE" ]
-then
-	log_error "-> ERROR: autosnapshot is currently running."
-	exit 1
-fi
+# register exit/clean up tasks
+on_exit_run	log "end-------------------------------------------------------------"
+[ $DEBUG = false ] && on_exit_run rm -rf $TMP_PATH
+on_exit_run rm -f $LOCK_FILE
 
 # set the lock flag w/ pid
 touch $LOCK_FILE > /dev/null 2>&1
@@ -307,11 +388,7 @@ then
 fi
 echo $$ > $LOCK_FILE
 
-# register exit/clean up tasks
-on_exit_run rm -f $LOCK_FILE
-
 # create/clean snapshots
-getvms
-snapshotvms
+do_work
 
 exit 0
