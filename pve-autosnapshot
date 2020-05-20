@@ -176,7 +176,7 @@ snapshot_vm ()
             log_error "ERROR: wrong --snap-retain value, remember to add the 'ago' word. ex: 1 day ago or use the minus sign: -2 days"
         fi
 
-        [ $DEBUG = true ] && log "vm ${vm} get napshot list"
+        [ $DEBUG = true ] && log "vm ${vm} get snapshot list"
         SNAP_LIST=$( pvesh get /nodes/${NODE_ID}/${type}/${vm}/snapshot --output-format yaml | grep "name: ${SNAP_PREF}" | awk '{print$2}' | sort | head -n -1 2> $ERR_FILE )
         check_for_error
 
