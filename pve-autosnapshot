@@ -224,16 +224,20 @@ replicate_vm_now()
 {
     local vm=$1
 
+    [ $DEBUG = true ] && log "vm ${vm} get replication tasks."
     replication_tasks=$( pvesh get /nodes/${NODE_ID}/replication --guest $vm --noborder=1 --noheader=1 )
 
     for task in ${replication_tasks}
     do
+        [ $DEBUG = true ] && log "vm ${vm} replication task ${task} get status."
         pvesh get /nodes/${NODE_ID}/replication/${task}/status --noborder=1 --noheader=1 | grep "target" | grep -w "${REPLICATE_TO_TARGET}" > /dev/null 2>&1
         if [ $? -eq 0 ]
         then
             log "vm $vm triggering replication task ${task}."
             output=$( pvesh create /nodes/${NODE_ID}/replication/${task}/schedule_now )
             log "vm $vm $output"
+        else
+            [ $DEBUG = true ] && log "vm ${vm} replication task ${task} does not target node ${REPLICATE_TO_TARGET}."
         fi
     done
 }
@@ -262,6 +266,7 @@ do_work ()
     # trigger replication
     if [ ! -z "${REPLICATE_TO_TARGET}" ]
     then
+        log "vm $vm wait 1m to trigger replication task"
         sleep 1m
 
         for vm in ${VM_LIST_LXC}
