@@ -233,9 +233,9 @@ replicate_vm_now()
         pvesh get /nodes/${NODE_ID}/replication/${task}/status --noborder=1 --noheader=1 | grep "target" | grep -w "${REPLICATE_TO_TARGET}" > /dev/null 2>&1
         if [ $? -eq 0 ]
         then
-            log "vm $vm triggering replication task ${task}."
+            log "vm ${vm} triggering replication task ${task}."
             output=$( pvesh create /nodes/${NODE_ID}/replication/${task}/schedule_now )
-            log "vm $vm $output"
+            [ $DEBUG = true ] && log "vm ${vm} $output"
         else
             [ $DEBUG = true ] && log "vm ${vm} replication task ${task} does not target node ${REPLICATE_TO_TARGET}."
         fi
