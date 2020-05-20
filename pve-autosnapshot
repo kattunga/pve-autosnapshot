@@ -208,10 +208,10 @@ snapshot_vm ()
     then
         local SNAPNAME=${SNAP_PREF}${TODAY_DATE_TIME}
 
-        log "${type} $vm@$SNAPNAME doing snapshot."
+        log "vm $vm creating snapshot $SNAPNAME."
         output=$( pvesh create /nodes/${NODE_ID}/${type}/${vm}/snapshot --snapname "${SNAPNAME}" 2> $ERR_FILE )
         check_for_error
-        log "$output"
+        [ $DEBUG = true ] && log "vm $vm $output"
     fi
 }
 
@@ -222,16 +222,18 @@ snapshot_vm ()
 #
 replicate_vm_now()
 {
-    replication_tasks=$( pvesh get /nodes/${NODE_ID}/replication --guest $1 --noborder=1 --noheader=1 )
+    local vm=$1
+
+    replication_tasks=$( pvesh get /nodes/${NODE_ID}/replication --guest $vm --noborder=1 --noheader=1 )
 
     for task in ${replication_tasks}
     do
         pvesh get /nodes/${NODE_ID}/replication/${task}/status --noborder=1 --noheader=1 | grep "target" | grep -w "${REPLICATE_TO_TARGET}" > /dev/null 2>&1
         if [ $? -eq 0 ]
         then
-            log "triggering replication task ${task}."
+            log "vm $vm triggering replication task ${task}."
             output=$( pvesh create /nodes/${NODE_ID}/replication/${task}/schedule_now )
-            log "$output"
+            log "vm $vm $output"
         fi
     done
 }
