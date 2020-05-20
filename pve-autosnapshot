@@ -326,6 +326,7 @@ do
         	SNAPSHOT=false
         	;;
         --tr-target)
+            shift
         	REPLICATE_TO_TARGET=$1
         	;;
         --quiet)
