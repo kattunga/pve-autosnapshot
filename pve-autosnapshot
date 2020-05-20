@@ -54,7 +54,7 @@ on_exit_run() {
     local n=${#on_exit_items[*]}
     on_exit_items[$n]="$*"
     if [[ $n -eq 0 ]]; then
-        [ $DEBUG == true ] && log "Setting trap"
+        [ $DEBUG == true ] && log "setting trap"
         for sig in EXIT HUP INT QUIT PIPE TERM; do
         	[ $DEBUG == true ] && log "trap \"on_exit $sig\" $sig"
         	trap "on_exit $sig" $sig
@@ -137,7 +137,7 @@ get_vms ()
 {
     if [[ "${VM_TYPE}" == "all" || "${VM_TYPE}" == "lxc" ]]
     then
-        [ $DEBUG = true ] && log "Get lxc vm list"
+        [ $DEBUG = true ] && log "get lxc vm list"
         VM_LIST_LXC=$( pvesh get /nodes/${NODE_ID}/lxc --noborder=1 --noheader=1 | awk '{print$2}' 2> $ERR_FILE )
         check_for_error
         if [ "${VM_ID}" != "" ]; then
@@ -147,7 +147,7 @@ get_vms ()
 
     if [[ "${VM_TYPE}" == "all" || "${VM_TYPE}" == "qemu" ]]
     then
-        [ $DEBUG = true ] && log "Get qemu vm list"
+        [ $DEBUG = true ] && log "get qemu vm list"
         VM_LIST_QEMU=$( pvesh get /nodes/${NODE_ID}/qemu --noborder=1 --noheader=1 | awk '{print$2}' 2> $ERR_FILE )
         check_for_error
         if [ "${VM_ID}" != "" ]; then
@@ -165,6 +165,8 @@ snapshot_vm ()
     local type=$1
     local vm=$2
 
+    [ $DEBUG = true ] && log "vm ${vm}"
+
     # clan old snapshots
     if [ ! -z "${MAX_TIME}" ]
     then
@@ -174,7 +176,7 @@ snapshot_vm ()
             log_error "ERROR: wrong --snap-retain value, remember to add the 'ago' word. ex: 1 day ago or use the minus sign: -2 days"
         fi
 
-        [ $DEBUG = true ] && log "get napshot list"
+        [ $DEBUG = true ] && log "vm ${vm} get napshot list"
         SNAP_LIST=$( pvesh get /nodes/${NODE_ID}/${type}/${vm}/snapshot --output-format yaml | grep "name: ${SNAP_PREF}" | awk '{print$2}' | sort | head -n -1 2> $ERR_FILE )
         check_for_error
 
@@ -187,16 +189,16 @@ snapshot_vm ()
             if [ $( echo ${SNAP_DATE_TIME} | grep -c '^[0-9]*$' ) -eq 1 ] && [ ${#SNAP_DATE_TIME} -eq 14 ]; then
                 if [ $RETAIN_DATE_TIME -gt $SNAP_DATE_TIME ]
                 then
-                    log "destroying snapshot $snap"
+                    log "vm ${vm} destroying snapshot $snap"
                     output=$( pvesh delete /nodes/${NODE_ID}/${type}/${vm}/snapshot/${snap} 2> $ERR_FILE )
                     check_for_error
-                    log "$output"
+                    [ $DEBUG = true ] && log "vm ${vm} $output"
 
                 else
-                    [ $DEBUG = true ] && log "$snap is not expired."
+                    [ $DEBUG = true ] && log "vm ${vm} $snap is not expired."
                 fi
             else
-                log "$snap name has wrong datetime format."
+                log "vm ${vm} $snap name has wrong datetime format."
             fi
         done
     fi
