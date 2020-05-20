@@ -266,7 +266,7 @@ do_work ()
     # trigger replication
     if [ ! -z "${REPLICATE_TO_TARGET}" ]
     then
-        log "vm $vm wait 1m to trigger replication task"
+        log "vm $vm waiting 1m to trigger replication tasks"
         sleep 1m
 
         for vm in ${VM_LIST_LXC}
