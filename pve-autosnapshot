@@ -1,5 +1,14 @@
 #!/bin/bash
 
+#######################################################################################
+# https://github.com/kattunga/pve-autosnapshot
+#
+# automatic snapshot of VMs and CTs from any node in cluster using pvesh
+#
+# pve-autosnapshot.sh --node pve-main --id 213 --prefix 'day-' --snap-retain '30 days ago'
+#
+#######################################################################################
+
 DATE=/usr/bin/date
 
 LOG_DATE_FORMAT="+%Y-%m-%d %H:%M:%S"
