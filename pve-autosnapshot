@@ -103,7 +103,7 @@ log() {
 			if [ "->" == "${line:0:2}" ]; then
 				line="${line:2}"
 			fi
-			$LOGGER -t $(basename $0) "$line"
+			logger -t $(basename $0) "$line"
 		fi
 	fi
 }
