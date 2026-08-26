@@ -122,9 +122,8 @@ log() {
 # Function check if error was logged
 #
 check_for_error() {
-	if [ -s "$LOG_ERROR_FILE" ]; then
-		log "ERROR: $(cat $LOG_ERROR_FILE)" "2"
-		execute_notification
+	if [ -s "$ERR_FILE" ]; then
+		log "ERROR: $(cat $ERR_FILE)" "2"
 		exit 1
 	fi
 }
@@ -134,8 +133,9 @@ check_for_error() {
 # Function log error
 #
 log_error() {
-	echo "$1" > $LOG_ERROR_FILE
-	check_for_error
+	echo "$1" > $ERR_FILE
+	log "ERROR: $1" "2"
+	exit 1
 }
 
 #######################################################################################
@@ -147,7 +147,7 @@ get_vms ()
     if [[ "${VM_TYPE}" == "all" || "${VM_TYPE}" == "lxc" ]]
     then
         [ $DEBUG = true ] && log "get lxc vm list"
-        VM_LIST_LXC=$( pvesh get /nodes/${NODE_ID}/lxc --noborder=1 --noheader=1 | awk '{print$2}' 2> $ERR_FILE )
+        VM_LIST_LXC=$( pvesh get /nodes/${NODE_ID}/lxc --noborder=1 --noheader=1 2> $ERR_FILE | awk '{print$2}' )
         check_for_error
         if [ "${VM_ID}" != "" ]; then
             VM_LIST_LXC=$( echo "$VM_LIST_LXC" | grep -E -w ${VM_ID} )
@@ -157,7 +157,7 @@ get_vms ()
     if [[ "${VM_TYPE}" == "all" || "${VM_TYPE}" == "qemu" ]]
     then
         [ $DEBUG = true ] && log "get qemu vm list"
-        VM_LIST_QEMU=$( pvesh get /nodes/${NODE_ID}/qemu --noborder=1 --noheader=1 | awk '{print$2}' 2> $ERR_FILE )
+        VM_LIST_QEMU=$( pvesh get /nodes/${NODE_ID}/qemu --noborder=1 --noheader=1 2> $ERR_FILE | awk '{print$2}' )
         check_for_error
         if [ "${VM_ID}" != "" ]; then
             VM_LIST_QEMU=$( echo "$VM_LIST_QEMU" | grep -E -w ${VM_ID} )
@@ -182,11 +182,11 @@ snapshot_vm ()
         RETAIN_DATE_TIME=$( ${DATE} "${SNAP_DATE_FORMAT}" --date="${MAX_TIME}" )
         if [ $RETAIN_DATE_TIME -gt $TODAY_DATE_TIME ]
         then
-            log_error "ERROR: wrong --snap-retain value, remember to add the 'ago' word. ex: 1 day ago or use the minus sign: -2 days"
+            log_error "wrong --snap-retain value, remember to add the 'ago' word. ex: 1 day ago or use the minus sign: -2 days"
         fi
 
         [ $DEBUG = true ] && log "vm ${vm} get snapshot list"
-        SNAP_LIST=$( pvesh get /nodes/${NODE_ID}/${type}/${vm}/snapshot --output-format yaml | grep "name: ${SNAP_PREF}" | awk '{print$2}' | sort | head -n -1 2> $ERR_FILE )
+        SNAP_LIST=$( pvesh get /nodes/${NODE_ID}/${type}/${vm}/snapshot --output-format yaml 2> $ERR_FILE | grep "name: ${SNAP_PREF}" | awk '{print$2}' | sort | head -n -1 )
         check_for_error
 
         for snap in ${SNAP_LIST}
@@ -380,23 +380,26 @@ NODE_ID_HASH=${NODE_ID//\//#}
 # lock file to avoid concurrent snapshot
 LOCK_FILE=$LOCK_PATH/$(basename $0 .sh)-${NODE_ID_HASH}
 
+# create isolated tmp directory. must happen before the first log_error:
+# $ERR_FILE and the log file live in here
+mkdir -p $TMP_PATH > /dev/null 2>&1
+[ $DEBUG = true ] && log "TMP_PATH = $TMP_PATH"
+
+# register exit/clean up tasks. the lock file is NOT registered yet, on purpose:
+# it is not ours until the check below passes, and removing it here would delete
+# the lock of the process that is actually running
+on_exit_run	log "end-------------------------------------------------------------"
+[ $DEBUG = false ] && on_exit_run rm -rf $TMP_PATH
+
 # Check if snapshot is running
 if [ -e "$LOCK_FILE" ]
 then
-	log_error "ERROR: autosnapshot is currently running."
-	exit 1
+	log_error "autosnapshot is currently running."
 fi
-
-# create isolated tmp directory
-mkdir -p $TMP_PATH > /dev/null 2>&1
-[ $DEBUG = true ] && log "TMP_PATH = $TMP_PATH"
 
 # save target name as first line of log
 log "Node: $NODE_ID vm: $VM_ID"
 
-# register exit/clean up tasks
-on_exit_run	log "end-------------------------------------------------------------"
-[ $DEBUG = false ] && on_exit_run rm -rf $TMP_PATH
 on_exit_run rm -f $LOCK_FILE
 
 # set the lock flag w/ pid
