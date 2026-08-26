@@ -112,7 +112,7 @@ log() {
 			if [ "->" == "${line:0:2}" ]; then
 				line="${line:2}"
 			fi
-			logger -t $(basename $0) "$line"
+			logger -t $(basename $0 .sh) "$line"
 		fi
 	fi
 }
